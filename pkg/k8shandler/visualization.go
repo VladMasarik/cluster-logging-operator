@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	oauth "github.com/openshift/api/oauth/v1"
@@ -43,6 +44,10 @@ func (clusterRequest *ClusterLoggingRequest) CreateOrUpdateVisualization() (err 
 		}
 
 		if err = clusterRequest.createOrUpdateKibanaRoute(); err != nil {
+			return
+		}
+
+		if err = clusterRequest.createOrUpdateKibanaConsoleExternalLogLink(); err != nil {
 			return
 		}
 
@@ -132,6 +137,11 @@ func (clusterRequest *ClusterLoggingRequest) removeKibana() (err error) {
 		if err = clusterRequest.RemoveServiceAccount(name); err != nil {
 			return
 		}
+
+		if err = clusterRequest.RemoveConsoleExternalLogLink(name); err != nil {
+			return
+		}
+
 	}
 
 	return nil
@@ -336,6 +346,30 @@ func (clusterRequest *ClusterLoggingRequest) createOrUpdateKibanaRoute() error {
 		return fmt.Errorf("Failure creating Kibana route shared config role binding for %q: %v", cluster.Name, err)
 	}
 
+	return nil
+}
+
+func (clusterRequest *ClusterLoggingRequest) createOrUpdateKibanaConsoleExternalLogLink() (err error) {
+	cluster := clusterRequest.cluster
+
+	kibanaURL, err := clusterRequest.GetRouteURL("kibana")
+	if err != nil {
+		return err
+	}
+
+	consoleExternalLogLink := NewConsoleExternalLogLink(
+		"kibana",
+		cluster.Namespace,
+		"Show in Kibana",
+		strings.Join([]string{kibanaURL, "/app/kibana#/discover?_g=(time:(from:now-1w,mode:relative,to:now))&_a=(columns:!(kubernetes.container_name,message),query:(query_string:(analyze_wildcard:!t,query:'kubernetes.pod_name:\"${resourceName}\" AND kubernetes.namespace_name:\"${resourceNamespace}\"')),sort:!('@timestamp',desc))#console_container_name=${containerName}"}, ""),
+	)
+
+	utils.AddOwnerRefToObject(consoleExternalLogLink, utils.AsOwner(cluster))
+
+	err = clusterRequest.Create(consoleExternalLogLink)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("Failure creating Kibana console external log link for %q: %v", cluster.Name, err)
+	}
 	return nil
 }
 
